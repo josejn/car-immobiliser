@@ -6,6 +6,7 @@
 
 #include <SPI.h>
 #include <MFRC522.h>
+#include "pitches.h"
 
 #define VALID 1
 #define INVALID 2
@@ -14,7 +15,7 @@
 const bool DEBUG = true;
 const int RST_PIN = 5; // Pin 9 para el reset del RC522
 const int SS_PIN = 10; // Pin 10 para el SS (SDA) del RC522
-const int speakerOut = 9; // For the sound
+const int speaker_pin = 9; // For the sound
 
 
 MFRC522 mfrc522(SS_PIN, RST_PIN);   // Crear instancia del MFRC522
@@ -23,37 +24,39 @@ byte readUID[4]; // Almacena el tag leido
 byte validKey1[4] = { 0x03, 0x01, 0xE2, 0xC7 };  // Ejemplo de clave valida
 //D3 5B E3 C7
 
-//****************************
-//****** FOR MUSIC ***********
-#define  c     3830    // 261 Hz
-#define  d     3400    // 294 Hz
-#define  e     3038    // 329 Hz
-#define  f     2864    // 349 Hz
-#define  g     2550    // 392 Hz
-#define  a     2272    // 440 Hz
-#define  b     2028    // 493 Hz
-#define  C     1912    // 523 Hz 
-#define  R     0
-// MELODY and TIMING  =======================================
-//  melody[] is an array of notes, accompanied by beats[],
-//  which sets each note's relative length (higher #, longer note)
-int melody[] = {  C,  b,  g,  C,  b,   e,  R,  C,  c,  g, a, C };
-int beats[]  = { 16, 16, 16,  8,  8,  16, 32, 16, 16, 16, 8, 8 };
-int MAX_COUNT = sizeof(melody) / 2; // Melody length, for looping.
-
-// Set overall tempo
-long tempo = 10000;
-// Set length of pause between notes
-int pause = 1000;
-// Loop variable to increase Rest length
-int rest_count = 100; //<-BLETCHEROUS HACK; See NOTES
-
-// Initialize core variables
-int tone_ = 0;
-int beat = 0;
-long duration  = 0;
+// Melodies definition: access, welcome and rejection
+int access_melody[] = {NOTE_FS7, NOTE_DS7};
+int access_noteDurations[] = {2, 2};
+int fail_melody[] = {NOTE_DS7, NOTE_DS7, NOTE_DS7};
+int fail_noteDurations[] = {8, 8, 8};
 
 
+//========== Function to play the access granted or denied tunes ==========
+void playTune(int Scan) {
+  pinMode(speaker_pin, OUTPUT);
+  if (Scan == 1) // A Good card Read
+  {
+    for (int i = 0; i < 2; i++)    //loop through the notes
+    { // Good card read
+      int access_noteDuration = 1000 / access_noteDurations[i];
+      tone(speaker_pin, access_melody[i], access_noteDuration);
+      int access_pauseBetweenNotes = access_noteDuration * 1.30;
+      delay(access_pauseBetweenNotes);
+      noTone(speaker_pin);
+    }
+  }
+  else // A Bad card read
+    for (int i = 0; i < 3; i++)    //loop through the notes
+    {
+      int fail_noteDuration = 1000 / fail_noteDurations[i];
+      tone(speaker_pin, fail_melody[i], fail_noteDuration);
+      int fail_pauseBetweenNotes = fail_noteDuration * 1.30;
+      delay(fail_pauseBetweenNotes);
+      noTone(speaker_pin);
+    }
+    delay(50);
+    pinMode(speaker_pin, INPUT);
+}
 
 void printArray(byte *buffer, byte bufferSize) {
   for (byte i = 0; i < bufferSize; i++) {
@@ -87,7 +90,7 @@ int getCardStatus() {
     if (mfrc522.PICC_ReadCardSerial())
     {
       // Comparar ID con las claves validas
-      if (isEqualArray(mfrc522.uid.uidByte, validKey1, 4)){
+      if (isEqualArray(mfrc522.uid.uidByte, validKey1, 4)) {
         Serial.println("Tarjeta valida");
         return VALID;
       }
@@ -110,34 +113,10 @@ void startEngine() {
 }
 
 void soundOK() {
-  Serial.println("Playing ok tone");
-  // PLAY TONE  ==============================================
-  // Pulse the speaker to play a tone for a particular duration
-  long elapsed_time = 0;
-  if (tone_ > 0) { // if this isn't a Rest beat, while the tone has
-    //  played less long than 'duration', pulse speaker HIGH and LOW
-    while (elapsed_time < duration) {
-
-      digitalWrite(speakerOut,HIGH);
-      delayMicroseconds(tone_ / 2);
-
-      // DOWN
-      digitalWrite(speakerOut, LOW);
-      delayMicroseconds(tone_ / 2);
-
-      // Keep track of how long we pulsed
-      elapsed_time += (tone_);
-    }
-  }
-  else { // Rest beat; loop times delay
-    for (int j = 0; j < rest_count; j++) { // See NOTE on rest_count
-      delayMicroseconds(duration);  
-    }                                
-  }                                
+  playTune(VALID);
 }
-
 void soundKO() {
-  Serial.println("Playing ko! tone");
+  playTune(INVALID);
 }
 
 void setup() {
@@ -149,13 +128,13 @@ void setup() {
 
 void loop() {
   int card = getCardStatus();
-  if (VALID == card){
+  if (VALID == card) {
     soundOK();
-    startEngine();  
-  } else if (INVALID == card){
-    soundKO();  
+    startEngine();
+  } else if (INVALID == card) {
+    soundKO();
   }
-  
+
   delay(250);
 
 }
