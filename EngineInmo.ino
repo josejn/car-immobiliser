@@ -17,7 +17,7 @@ const int DEBUG = 1;
 const int ERROR_ = 2;
 const int WARN = 3;
 const int INFO = 4;
-const int LOG_LEVEL = TRACE;
+const int LOG_LEVEL = DEBUG;
 
 const int RST_PIN = 5; // Pin 9 para el reset del RC522
 const int SS_PIN = 10; // Pin 10 para el SS (SDA) del RC522
@@ -32,14 +32,15 @@ int LEARNING_TIME = 6000;
 int OLD_STATUS = -1;
 int MAIN_STATUS = LOCKED;
 int TIMER = 0;
-unsigned char data[16] = {'O', 'G', 'T', ' ', 'K', 'L', 'O', 'R', ' ', 'J', 'O', 'S', 'E', '_', 'J', 'N'};
+unsigned char data[16] = {'J', 'o', 's', 'e', '_', 'J', 'N', ' ', 'B', 'M', 'W', ' ', 'I', 'N', 'M', 'O'};
+byte VOID_ID[4] = {0, 0, 0, 0};
 
 MFRC522::MIFARE_Key key;
 
 MFRC522 mfrc522(SS_PIN, RST_PIN);   // Crear instancia del MFRC522
 
 byte readUID[4]; // Almacena el tag leido
-byte validKey1[4] = { 0x03, 0x01, 0xE2, 0xC7 };  // Ejemplo de clave valida
+byte validKey1[4] = { 0x05, 0x99, 0x48, 0xB5 };  // Ejemplo de clave valida
 //D3 5B E3 C7
 
 // Melodies definition: access, welcome and rejection
@@ -140,8 +141,7 @@ bool isEqualArray(byte arrayA[], byte arrayB[], int length)
   return true;
 }
 
-bool rfidAuthenticate(byte trailerBlock) {
-  MFRC522::StatusCode status;
+bool prepareCard() {
   if (!mfrc522.PICC_IsNewCardPresent())
   {
     return false;
@@ -152,28 +152,25 @@ bool rfidAuthenticate(byte trailerBlock) {
     logger(DEBUG, "Card is not ready");
     return false;
   }
+  return true;
+}
 
+bool rfidAuthenticate(byte trailerBlock) {
+  MFRC522::StatusCode status;
   status = (MFRC522::StatusCode) mfrc522.PCD_Authenticate(MFRC522::PICC_CMD_MF_AUTH_KEY_A, trailerBlock, &key, &(mfrc522.uid));
   if (status != MFRC522::STATUS_OK) {
     String logLine =  "Card authentication failed ";
     logLine = logLine.concat(mfrc522.GetStatusCodeName(status));
-    logger(DEBUG, logLine);
+    logger(WARN, logLine);
     return false;
   }
-  logger(INFO, "Card authenticated");
+  logger(DEBUG, "Card authenticated");
   return true;
-}
-
-void rfidCloseSession() {
-  // Halt PICC
-  mfrc522.PICC_HaltA();
-  // Stop encryption on PCD
-  mfrc522.PCD_StopCrypto1();
 }
 
 void rfidWriteData(byte trailerBlock, byte sector, byte blockAddr, byte data[]) {
   MFRC522::StatusCode status;
-   if (LOG_LEVEL <= DEBUG) {
+  if (LOG_LEVEL <= DEBUG) {
     String logLine = "Writing data into Card: ";
     logLine += blockAddr;
     logger(DEBUG, logLine);
@@ -190,7 +187,7 @@ void rfidWriteData(byte trailerBlock, byte sector, byte blockAddr, byte data[]) 
   }
 }
 
-byte* rfidReadData(byte trailerBlock, byte blockAddr) {
+byte* rfidReadData(byte blockAddr) {
   MFRC522::StatusCode status;
   byte buffer[18];
   byte size = sizeof(buffer);
@@ -211,37 +208,34 @@ byte* rfidReadData(byte trailerBlock, byte blockAddr) {
   return buffer;
 }
 
-int getCardStatus() {
+byte* getCardId() {
+  logger(DEBUG, "Reading id!");
+  printArray(mfrc522.uid.uidByte, 4, DEBUG);
+  return mfrc522.uid.uidByte;
+}
 
-  // Detectar tarjeta
-  if (mfrc522.PICC_IsNewCardPresent())
-  {
-    //Seleccionamos una tarjeta
-    if (mfrc522.PICC_ReadCardSerial())
-    {
-      unsigned char *data2 = rfidReadData(7, 4);
-      printArrayAsString(data2, 16, DEBUG);
-      // Comparar ID con las claves validas
-      if (isEqualArray(mfrc522.uid.uidByte, validKey1, 4)) {
-        logger(INFO, "Valid Card detected by ID");
-        return VALID;
-      } else 
-      if (isEqualArray(data2, data, 16)) {
-        logger(INFO, "Valid Card detected by DATA");
-        return VALID;
-      }
-      else {
-        if (LOG_LEVEL <= DEBUG) {
-          printArray(mfrc522.uid.uidByte, mfrc522.uid.size, DEBUG);
-        }
-        logger(WARN, "INVALID Card detected!");
-        return INVALID;
-      }
-      // Finalizar lectura actual
-      mfrc522.PICC_HaltA();
-    }
+boolean isValidCardById() {
+  byte* myid = getCardId();
+  if (isEqualArray(myid, validKey1, 4)) {
+    logger(INFO, "Valid card by ID");
+    return true;
   }
-  return NO_CARD;
+  logger(INFO, "Invalid card by ID");
+  return false;
+}
+
+bool isValidCardByData() {
+  if (rfidAuthenticate(7)) {
+    byte* mydata = rfidReadData(4);
+    if (isEqualArray(mydata, data, 16)) {
+      logger(INFO, "Valid card by DATA");
+      return true;
+    }
+    logger(INFO, "Invalid card by DATA");
+    return false;
+  }
+  logger(DEBUG, "No authentication");
+  return false;
 }
 
 void startEngine() {
@@ -256,15 +250,8 @@ void soundKO() {
   playTune(INVALID);
 }
 
-void pairCard() {
-  delay(250);
-  if (rfidAuthenticate(7)) {
-    rfidWriteData(7, 1, 4, data);
-    unsigned char *data2 = rfidReadData(7, 4);
-    rfidCloseSession();
-  } else {
-    logger(WARN, "Error authenticating RFIDd");
-  }
+void soundCloned() {
+  playTune(INVALID);
 }
 
 void on_locked() {
@@ -272,16 +259,33 @@ void on_locked() {
     OLD_STATUS = MAIN_STATUS;
     logger(INFO, "New Status is LOCKED");
   }
-  int card;
+  int card = NO_CARD;
   //Espero hasta tener tarjeta
-  while ((card = getCardStatus()) == NO_CARD) {
-    delay(250);
+  while (card == NO_CARD) {
+    delay(500);
+    if (prepareCard()) {
+      if (isValidCardById()) {
+        card = VALID;
+      }
+      else if (isValidCardByData()) {
+        card = VALID;
+      }
+      else {
+        card = INVALID;
+      }
+    }
+    else {
+      card = NO_CARD;
+    }
+    mfrc522.PICC_HaltA();
+    mfrc522.PCD_StopCrypto1();
   }
 
   //Si es valida, salto al nuevo estado
   if (card == VALID) {
+
     MAIN_STATUS = UNLOCKED_LEARNING;
-  } else if (INVALID == card) {
+  } else {
     soundKO();
   }
 }
@@ -298,8 +302,25 @@ void on_unlocked_learning() {
     int timer = millis() + LEARNING_TIME;
 
     while (true) {
-      pairCard();
+      if (prepareCard()) {
+        if (!isValidCardByData()) {
+          logger(INFO, "Cloning Card!");
+          rfidWriteData(7, 1, 4, data);
+          unsigned char *data2 = rfidReadData(4);
 
+          if (isEqualArray(data, data2, 16)) {
+            logger(INFO, "Cloning OK!");
+            soundCloned();
+          } else {
+            logger(WARN, "Cloning KO!");
+            soundKO();
+          }
+
+          mfrc522.PICC_HaltA();
+          mfrc522.PCD_StopCrypto1();
+
+        }
+      }
       if (timer <= millis()) {
         break;
       }
