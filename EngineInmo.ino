@@ -11,8 +11,15 @@
 #define VALID 1
 #define INVALID 2
 #define NO_CARD 3
-#define ENGINE 4
 #define CLONE 3
+
+#define ENGINE_PIN 4
+#define ACC_PIN 6
+#define  RST_PIN 5 // Pin 9 para el reset del RC522
+#define  SS_PIN 10 // Pin 10 para el SS (SDA) del RC522
+#define  speaker_pin 9 // For the sound
+#define ACC_OFF true
+#define ACC_ON false
 
 const int TRACE = 0;
 const int DEBUG = 1;
@@ -20,10 +27,6 @@ const int ERROR_ = 2;
 const int WARN = 3;
 const int INFO = 4;
 const int LOG_LEVEL = DEBUG;
-
-const int RST_PIN = 5; // Pin 9 para el reset del RC522
-const int SS_PIN = 10; // Pin 10 para el SS (SDA) del RC522
-const int speaker_pin = 9; // For the sound
 
 int INIT = 0;
 int LOCKED = 1;
@@ -278,15 +281,15 @@ int waitForCard() {
 
 void startEngine() {
   logger(INFO, "Starting Engine is allowed");
-  pinMode(ENGINE, OUTPUT);
-  digitalWrite(ENGINE, HIGH);
+  pinMode(ENGINE_PIN, OUTPUT);
+  digitalWrite(ENGINE_PIN, HIGH);
 
 }
 
 void stopEngine() {
   logger(INFO, "Stopping Engine");
-  pinMode(ENGINE, OUTPUT);
-  digitalWrite(ENGINE, LOW);
+  pinMode(ENGINE_PIN, OUTPUT);
+  digitalWrite(ENGINE_PIN, LOW);
 
 }
 
@@ -395,9 +398,18 @@ void on_unlocked_learning() {
 void on_unlocked() {
   if (OLD_STATUS != UNLOCKED) {
     OLD_STATUS = MAIN_STATUS;
-
+    bool acc = ACC_OFF;
     logger(INFO, "New Status is UNLOCKED");
-    //Do stuff here
+    while () {
+      bool acc = digitalRead(ACC_PIN);
+      delay(500);
+
+      if (acc) {
+        logger(INFO, "ACC ON");
+      } else {
+        logger(INFO, "ACC OFF");
+      }
+    }
   }
 }
 
@@ -414,6 +426,8 @@ void setup() {
   Serial.begin(9600); // Iniciar serial
   SPI.begin();        // Iniciar SPI
   mfrc522.PCD_Init(); // Iniciar MFRC522
+
+  pinMode(ACC_PIN, INPUT);
 
   for (byte i = 0; i < 6; i++) {
     key.keyByte[i] = 0xFF;
