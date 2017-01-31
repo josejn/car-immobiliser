@@ -11,6 +11,8 @@
 #define VALID 1
 #define INVALID 2
 #define NO_CARD 3
+#define ENGINE 4
+#define CLONE 3
 
 const int TRACE = 0;
 const int DEBUG = 1;
@@ -23,14 +25,16 @@ const int RST_PIN = 5; // Pin 9 para el reset del RC522
 const int SS_PIN = 10; // Pin 10 para el SS (SDA) del RC522
 const int speaker_pin = 9; // For the sound
 
-int LOCKED = 0;
-int UNLOCKED_LEARNING = 1;
-int UNLOCKED = 2;
-int UNLOCKED_WAITING = 0;
-int LEARNING_TIME = 6000;
+int INIT = 0;
+int LOCKED = 1;
+int UNLOCKED_LEARNING = 2;
+int UNLOCKED = 3;
+int UNLOCKED_WAITING = 4;
+unsigned long LEARNING_TIME = 10 * 1000;//milliseconds
+unsigned long ENGINE_TIME = 60000;//milliseconds
 
 int OLD_STATUS = -1;
-int MAIN_STATUS = LOCKED;
+int MAIN_STATUS = INIT;
 int TIMER = 0;
 unsigned char data[16] = {'J', 'o', 's', 'e', '_', 'J', 'N', ' ', 'B', 'M', 'W', ' ', 'I', 'N', 'M', 'O'};
 byte VOID_ID[4] = {0, 0, 0, 0};
@@ -48,6 +52,8 @@ int access_melody[] = {NOTE_FS7, NOTE_DS7};
 int access_noteDurations[] = {2, 2};
 int fail_melody[] = {NOTE_DS7, NOTE_DS7, NOTE_DS7};
 int fail_noteDurations[] = {8, 8, 8};
+int clone_melody[] = {NOTE_B6, NOTE_DS7, NOTE_FS7};
+int clone_noteDurations[] = {8, 8, 8};
 
 //***************** Logging function
 void logger(int mode, String msg) {
@@ -92,7 +98,7 @@ void playTune(int Scan) {
       noTone(speaker_pin);
     }
   }
-  else // A Bad card read
+  else if (Scan == 2) { // A Bad card read
     for (int i = 0; i < 3; i++)    //loop through the notes
     {
       int fail_noteDuration = 1000 / fail_noteDurations[i];
@@ -101,6 +107,17 @@ void playTune(int Scan) {
       delay(fail_pauseBetweenNotes);
       noTone(speaker_pin);
     }
+  }
+  else if (Scan == 3) { // A Bad card read
+    for (int i = 0; i < 3; i++)    //loop through the notes
+    {
+      int clone_noteDuration = 1000 / clone_noteDurations[i];
+      tone(speaker_pin, clone_melody[i], clone_noteDuration);
+      int clone_pauseBetweenNotes = clone_noteDuration * 1.30;
+      delay(clone_pauseBetweenNotes);
+      noTone(speaker_pin);
+    }
+  }
   delay(50);
   pinMode(speaker_pin, INPUT);
 }
@@ -238,8 +255,39 @@ bool isValidCardByData() {
   return false;
 }
 
+int waitForCard() {
+  int card = NO_CARD;
+  if (prepareCard()) {
+    if (isValidCardById()) {
+      card = VALID;
+    }
+    else if (isValidCardByData()) {
+      card = VALID;
+    }
+    else {
+      card = INVALID;
+    }
+  }
+  else {
+    card = NO_CARD;
+  }
+  mfrc522.PICC_HaltA();
+  mfrc522.PCD_StopCrypto1();
+  return card;
+}
+
 void startEngine() {
   logger(INFO, "Starting Engine is allowed");
+  pinMode(ENGINE, OUTPUT);
+  digitalWrite(ENGINE, HIGH);
+
+}
+
+void stopEngine() {
+  logger(INFO, "Stopping Engine");
+  pinMode(ENGINE, OUTPUT);
+  digitalWrite(ENGINE, LOW);
+
 }
 
 void soundOK() {
@@ -251,41 +299,47 @@ void soundKO() {
 }
 
 void soundCloned() {
-  playTune(INVALID);
+  playTune(CLONE);
+}
+
+void on_init() {
+  unsigned long timer = millis() + ENGINE_TIME;
+  int card = NO_CARD;
+
+  if (OLD_STATUS != INIT) {
+    OLD_STATUS = MAIN_STATUS;
+    logger(INFO, "New Status is INIT");
+  }
+
+  //Espero hasta tener tarjeta
+  while (card == NO_CARD) {
+    card = waitForCard();
+    if (timer <= millis()) {
+      MAIN_STATUS = LOCKED;
+      return;
+    }
+    delay(250);
+  }
+  //Si es valida, salto al nuevo estado
+  if (card == VALID) {
+    MAIN_STATUS = UNLOCKED_LEARNING;
+  } else {
+    soundKO();
+  }
 }
 
 void on_locked() {
   if (OLD_STATUS != LOCKED) {
     OLD_STATUS = MAIN_STATUS;
     logger(INFO, "New Status is LOCKED");
+    logger(WARN, "Time Expired! Locking engine");
+    stopEngine();
   }
-  int card = NO_CARD;
-  //Espero hasta tener tarjeta
-  while (card == NO_CARD) {
-    delay(500);
-    if (prepareCard()) {
-      if (isValidCardById()) {
-        card = VALID;
-      }
-      else if (isValidCardByData()) {
-        card = VALID;
-      }
-      else {
-        card = INVALID;
-      }
-    }
-    else {
-      card = NO_CARD;
-    }
-    mfrc522.PICC_HaltA();
-    mfrc522.PCD_StopCrypto1();
-  }
-
+  int card = waitForCard();
   //Si es valida, salto al nuevo estado
   if (card == VALID) {
-
     MAIN_STATUS = UNLOCKED_LEARNING;
-  } else {
+  } else if (card == INVALID) {
     soundKO();
   }
 }
@@ -299,7 +353,7 @@ void on_unlocked_learning() {
     soundOK();
     startEngine();
     int card;
-    int timer = millis() + LEARNING_TIME;
+    unsigned long timer = millis() + LEARNING_TIME;
 
     while (true) {
       if (prepareCard()) {
@@ -316,10 +370,17 @@ void on_unlocked_learning() {
             soundKO();
           }
 
-          mfrc522.PICC_HaltA();
-          mfrc522.PCD_StopCrypto1();
+          timer = millis() + LEARNING_TIME;
+          logger(DEBUG, "Learning Time extended!");
 
+        } else {
+          logger(INFO, "Already Paired!");
+          timer = millis() + LEARNING_TIME;
+          logger(DEBUG, "Learning Time extended!");
+          soundOK();
         }
+        mfrc522.PICC_HaltA();
+        mfrc522.PCD_StopCrypto1();
       }
       if (timer <= millis()) {
         break;
@@ -361,9 +422,11 @@ void setup() {
 
 
 void loop() {
+  if (MAIN_STATUS == INIT) {
+    on_init();
+  }
 
-
-  if (MAIN_STATUS == LOCKED) {
+  else if (MAIN_STATUS == LOCKED) {
     on_locked();
   }
 
@@ -378,15 +441,4 @@ void loop() {
   else if (MAIN_STATUS == UNLOCKED_WAITING) {
     on_unlocked_waiting();
   }
-
-
-  //  unsigned char data[16] = {'J', 'o', 's', 'e', '_', 'J', 'n', ' ', 'I', 'N', 'M', 'O', '_', 'B', 'M', 'W'};
-
-  //  if (rfidAuthenticate(7)) {
-  //    rfidWriteData(7, 1, 4, data);
-  //    unsigned char *data2 = rfidReadData(7, 4);
-  //    rfidCloseSession();
-  //  } else {
-  //    Serial.println("Error authenticating RFID");
-  //  }
 }
