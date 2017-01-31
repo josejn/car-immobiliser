@@ -15,11 +15,11 @@
 
 #define ENGINE_PIN 4
 #define ACC_PIN 6
-#define  RST_PIN 5 // Pin 9 para el reset del RC522
-#define  SS_PIN 10 // Pin 10 para el SS (SDA) del RC522
-#define  speaker_pin 9 // For the sound
-#define ACC_OFF true
-#define ACC_ON false
+#define RST_PIN 5 // Pin 9 para el reset del RC522
+#define SS_PIN 10 // Pin 10 para el SS (SDA) del RC522
+#define speaker_pin 9 // For the sound
+#define ACC_OFF 1
+#define ACC_ON 0
 
 const int TRACE = 0;
 const int DEBUG = 1;
@@ -33,8 +33,9 @@ int LOCKED = 1;
 int UNLOCKED_LEARNING = 2;
 int UNLOCKED = 3;
 int UNLOCKED_WAITING = 4;
-unsigned long LEARNING_TIME = 10 * 1000;//milliseconds
-unsigned long ENGINE_TIME = 60000;//milliseconds
+unsigned long LEARNING_TIME = 10000;//milliseconds
+unsigned long ENGINE_TIME =  120000;//milliseconds
+unsigned long IDLE_TIME = 300000;//milliseconds
 
 int OLD_STATUS = -1;
 int MAIN_STATUS = INIT;
@@ -352,9 +353,10 @@ void on_unlocked_learning() {
     OLD_STATUS = MAIN_STATUS;
     logger(INFO, "New Status is UNLOCKED_LEARNING");
 
+    startEngine();
     //Do stuff here
     soundOK();
-    startEngine();
+
     int card;
     unsigned long timer = millis() + LEARNING_TIME;
 
@@ -396,37 +398,47 @@ void on_unlocked_learning() {
 }
 
 void on_unlocked() {
+
   if (OLD_STATUS != UNLOCKED) {
     OLD_STATUS = MAIN_STATUS;
-    bool acc = ACC_OFF;
     logger(INFO, "New Status is UNLOCKED");
-    while () {
-      bool acc = digitalRead(ACC_PIN);
-      delay(500);
-
-      if (acc) {
-        logger(INFO, "ACC ON");
-      } else {
-        logger(INFO, "ACC OFF");
-      }
-    }
   }
+  bool acc = ACC_ON;
+  while (acc == ACC_ON) {
+    acc = digitalRead(ACC_PIN);
+    delay(250);
+  }
+  MAIN_STATUS = UNLOCKED_WAITING;
+
 }
 
 void on_unlocked_waiting() {
   if (OLD_STATUS != UNLOCKED_WAITING) {
     OLD_STATUS = MAIN_STATUS;
     logger(INFO, "New Status is UNLOCKED_WAITING");
-    //Do stuff here
-  }
 
+    unsigned long timer = millis() + IDLE_TIME;
+    bool acc = ACC_OFF;
+    while (acc == ACC_OFF) {
+      acc = digitalRead(ACC_PIN);
+
+      if (timer <= millis()) {
+        logger(WARN, "Max IDLE time! Locking engine");
+        MAIN_STATUS = LOCKED;
+        soundKO();
+        return;
+      }
+
+      delay(250);
+    }
+    MAIN_STATUS = UNLOCKED;
+  }
 }
 
 void setup() {
   Serial.begin(9600); // Iniciar serial
   SPI.begin();        // Iniciar SPI
   mfrc522.PCD_Init(); // Iniciar MFRC522
-
   pinMode(ACC_PIN, INPUT);
 
   for (byte i = 0; i < 6; i++) {
