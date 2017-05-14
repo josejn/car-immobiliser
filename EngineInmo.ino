@@ -1,4 +1,4 @@
-//RST          D9
+//RST          D5
 //SDA(SS)      D10
 //MOSI         D11
 //MISO         D12
@@ -12,14 +12,22 @@
 #define INVALID 2
 #define NO_CARD 3
 #define CLONE 3
+#define CONTACT 4
 
+#define STARTER_PIN 3
 #define ENGINE_PIN 4
-#define ACC_PIN 6
-#define RST_PIN 5 // Pin 9 para el reset del RC522
-#define SS_PIN 10 // Pin 10 para el SS (SDA) del RC522
+
+#define ACC_PIN 2
+#define RED_LED 6
+#define GREEN_LED 7
+
+#define RST_PIN 5 // Pin para el reset del RC522
+#define SS_PIN 10 // Pin  para el SS (SDA) del RC522
 #define speaker_pin 9 // For the sound
+
 #define ACC_OFF 1
 #define ACC_ON 0
+
 
 const int TRACE = 0;
 const int DEBUG = 1;
@@ -37,10 +45,13 @@ unsigned long LEARNING_TIME = 10000;//milliseconds
 unsigned long ENGINE_TIME =  120000;//milliseconds
 unsigned long IDLE_TIME = 300000;//milliseconds
 
+bool RED_STATUS = false;
+bool GREEN_STATUS = false;
+
 int OLD_STATUS = -1;
 int MAIN_STATUS = INIT;
 int TIMER = 0;
-unsigned char data[16] = {'J', 'o', 's', 'e', '_', 'J', 'N', ' ', 'B', 'M', 'W', ' ', 'I', 'N', 'M', 'O'};
+unsigned char data[16] = {'J', 'o', 's', 'e', '_', 'J', 'N', ' ', 'V', 'C', '3', '8', '4', '8', '3', '*'};
 byte VOID_ID[4] = {0, 0, 0, 0};
 
 MFRC522::MIFARE_Key key;
@@ -54,12 +65,17 @@ byte validKey1[4] = { 0x05, 0x99, 0x48, 0xB5 };  // Ejemplo de clave valida
 // Melodies definition: access, welcome and rejection
 int access_melody[] = {NOTE_FS7, NOTE_DS7};
 int access_noteDurations[] = {2, 2};
+
 int fail_melody[] = {NOTE_DS7, NOTE_DS7, NOTE_DS7};
 int fail_noteDurations[] = {8, 8, 8};
+
 int clone_melody[] = {NOTE_B6, NOTE_DS7, NOTE_FS7};
 int clone_noteDurations[] = {8, 8, 8};
 
-//***************** Logging function
+int contact_melody[] = {NOTE_DS7, NOTE_FS7};
+int contact_noteDurations[] = {8, 8};
+
+//========== Logging function ==========
 void logger(int mode, String msg) {
   if (mode >= LOG_LEVEL) {
 
@@ -122,10 +138,21 @@ void playTune(int Scan) {
       noTone(speaker_pin);
     }
   }
+  else if (Scan == 4) { // A Contact and ok card
+    for (int i = 0; i < 2; i++)    //loop through the notes
+    {
+      int contact_noteDuration = 1000 / contact_noteDurations[i];
+      tone(speaker_pin, contact_melody[i], contact_noteDuration);
+      int contact_pauseBetweenNotes = contact_noteDuration * 1.30;
+      delay(contact_pauseBetweenNotes);
+      noTone(speaker_pin);
+    }
+  }
   delay(50);
   pinMode(speaker_pin, INPUT);
 }
 
+//========== Array Utils ==========
 void printArray(byte *buffer, byte bufferSize, int level) {
   String logLine = "";
   for (byte i = 0; i < bufferSize; i++) {
@@ -143,8 +170,6 @@ void printArrayAsString(byte *buffer, byte bufferSize, int level) {
   logger(level, logLine);
 }
 
-
-//Función para comparar dos vectores
 bool isEqualArray(byte arrayA[], byte arrayB[], int length)
 {
   for (int index = 0; index < length; index++)
@@ -162,6 +187,7 @@ bool isEqualArray(byte arrayA[], byte arrayB[], int length)
   return true;
 }
 
+//========== CARD Utils ==========
 bool prepareCard() {
   if (!mfrc522.PICC_IsNewCardPresent())
   {
@@ -280,17 +306,54 @@ int waitForCard() {
   return card;
 }
 
+//========== Security Car API ==========
 void startEngine() {
   logger(INFO, "Starting Engine is allowed");
   pinMode(ENGINE_PIN, OUTPUT);
   digitalWrite(ENGINE_PIN, HIGH);
+  pinMode(STARTER_PIN, OUTPUT);
+  digitalWrite(STARTER_PIN, HIGH);
 
 }
+
+void blink_red(){
+  RED_STATUS = !RED_STATUS;
+  pinMode(RED_LED, OUTPUT);
+  digitalWrite(RED_LED, RED_STATUS);
+  }
+  
+void blink_green(){
+  GREEN_STATUS = !GREEN_STATUS;
+  pinMode(GREEN_LED, OUTPUT);
+  digitalWrite(GREEN_LED, GREEN_STATUS);
+  }
+  
+void on_red(){
+  pinMode(RED_LED, OUTPUT);
+  digitalWrite(RED_LED, HIGH);
+  }
+  
+void on_green(){
+  pinMode(GREEN_LED, OUTPUT);
+  digitalWrite(GREEN_LED, HIGH);
+  }
+  
+void off_red(){
+  pinMode(RED_LED, OUTPUT);
+  digitalWrite(RED_LED, LOW);
+  }
+  
+void off_green(){
+  pinMode(GREEN_LED, OUTPUT);
+  digitalWrite(GREEN_LED, LOW);
+  }
 
 void stopEngine() {
   logger(INFO, "Stopping Engine");
   pinMode(ENGINE_PIN, OUTPUT);
   digitalWrite(ENGINE_PIN, LOW);
+  pinMode(STARTER_PIN, OUTPUT);
+  digitalWrite(STARTER_PIN, LOW);
 
 }
 
@@ -306,10 +369,16 @@ void soundCloned() {
   playTune(CLONE);
 }
 
+void soundOK_and_Contact(){
+  playTune(CONTACT);
+}
+
+//========== Events ==========
 void on_init() {
   unsigned long timer = millis() + ENGINE_TIME;
   int card = NO_CARD;
 
+ 
   if (OLD_STATUS != INIT) {
     OLD_STATUS = MAIN_STATUS;
     logger(INFO, "New Status is INIT");
@@ -317,6 +386,7 @@ void on_init() {
 
   //Espero hasta tener tarjeta
   while (card == NO_CARD) {
+    blink_red();
     card = waitForCard();
     if (timer <= millis()) {
       MAIN_STATUS = LOCKED;
@@ -338,6 +408,8 @@ void on_locked() {
     logger(INFO, "New Status is LOCKED");
     logger(WARN, "Time Expired! Locking engine");
     stopEngine();
+    off_green();
+    on_red();
   }
   int card = waitForCard();
   //Si es valida, salto al nuevo estado
@@ -352,15 +424,15 @@ void on_unlocked_learning() {
   if (OLD_STATUS != UNLOCKED_LEARNING) {
     OLD_STATUS = MAIN_STATUS;
     logger(INFO, "New Status is UNLOCKED_LEARNING");
-
+    off_red();
     startEngine();
-    //Do stuff here
     soundOK();
 
     int card;
     unsigned long timer = millis() + LEARNING_TIME;
 
     while (true) {
+      blink_green();
       if (prepareCard()) {
         if (!isValidCardByData()) {
           logger(INFO, "Cloning Card!");
@@ -392,15 +464,17 @@ void on_unlocked_learning() {
       }
       delay(250);
     }
-    MAIN_STATUS = UNLOCKED;
+    MAIN_STATUS = UNLOCKED_WAITING;
   }
 
 }
 
 void on_unlocked() {
-
+  soundOK_and_Contact();
   if (OLD_STATUS != UNLOCKED) {
     OLD_STATUS = MAIN_STATUS;
+    off_red();
+    on_green();
     logger(INFO, "New Status is UNLOCKED");
   }
   bool acc = ACC_ON;
@@ -416,10 +490,11 @@ void on_unlocked_waiting() {
   if (OLD_STATUS != UNLOCKED_WAITING) {
     OLD_STATUS = MAIN_STATUS;
     logger(INFO, "New Status is UNLOCKED_WAITING");
-
+    on_green();
     unsigned long timer = millis() + IDLE_TIME;
     bool acc = ACC_OFF;
     while (acc == ACC_OFF) {
+      blink_red();
       acc = digitalRead(ACC_PIN);
 
       if (timer <= millis()) {
@@ -435,6 +510,7 @@ void on_unlocked_waiting() {
   }
 }
 
+//========== MAIN PROGRAM ==========
 void setup() {
   Serial.begin(9600); // Iniciar serial
   SPI.begin();        // Iniciar SPI
@@ -445,7 +521,6 @@ void setup() {
     key.keyByte[i] = 0xFF;
   }
 }
-
 
 void loop() {
   if (MAIN_STATUS == INIT) {
